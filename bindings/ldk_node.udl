@@ -321,6 +321,7 @@ enum BuildError {
 	"KVStoreSetupFailed",
 	"WalletSetupFailed",
 	"LoggerSetupFailed",
+	"NetworkMismatch",
 };
 
 [Trait]
