@@ -18,8 +18,8 @@ use lightning_invoice::{Bolt11InvoiceDescription, Description};
 use clightningrpc::lightningrpc::LightningRPC;
 use clightningrpc::responses::NetworkAddress;
 
-use bitcoincore_rpc::Auth;
 use bitcoincore_rpc::Client as BitcoindClient;
+use bitcoincore_rpc::{Auth, RpcApi};
 
 use electrum_client::Client as ElectrumClient;
 use lightning_invoice::Bolt11Invoice;
@@ -39,6 +39,9 @@ fn test_cln() {
 	)
 	.unwrap();
 	let electrs_client = ElectrumClient::new("tcp://127.0.0.1:50001").unwrap();
+
+	let _ = bitcoind_client.create_wallet("cln_integration_test", None, None, None, None);
+	let _ = bitcoind_client.load_wallet("cln_integration_test");
 
 	// Give electrs a kick.
 	common::generate_blocks_and_wait(&bitcoind_client, &electrs_client, 1);

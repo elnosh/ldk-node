@@ -177,6 +177,8 @@ pub(crate) fn setup_bitcoind_and_electrsd() -> (BitcoinD, ElectrsD) {
 	let mut bitcoind_conf = bitcoind::Conf::default();
 	bitcoind_conf.network = "regtest";
 	let bitcoind = BitcoinD::with_conf(bitcoind_exe, &bitcoind_conf).unwrap();
+	let _ = bitcoind.client.create_wallet("ldk_node_test", None, None, None, None);
+	let _ = bitcoind.client.load_wallet("ldk_node_test");
 
 	let electrs_exe = env::var("ELECTRS_EXE")
 		.ok()
@@ -361,8 +363,6 @@ pub(crate) fn setup_node(
 pub(crate) fn generate_blocks_and_wait<E: ElectrumApi>(
 	bitcoind: &BitcoindClient, electrs: &E, num: usize,
 ) {
-	let _ = bitcoind.create_wallet("ldk_node_test", None, None, None, None);
-	let _ = bitcoind.load_wallet("ldk_node_test");
 	print!("Generating {} blocks...", num);
 	let cur_height = bitcoind.get_block_count().expect("failed to get current block height");
 	let address = bitcoind
@@ -452,8 +452,6 @@ where
 pub(crate) fn premine_and_distribute_funds<E: ElectrumApi>(
 	bitcoind: &BitcoindClient, electrs: &E, addrs: Vec<Address>, amount: Amount,
 ) {
-	let _ = bitcoind.create_wallet("ldk_node_test", None, None, None, None);
-	let _ = bitcoind.load_wallet("ldk_node_test");
 	generate_blocks_and_wait(bitcoind, electrs, 101);
 
 	for addr in addrs {
