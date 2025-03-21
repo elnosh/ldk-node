@@ -9,6 +9,7 @@
 
 mod common;
 
+use common::TestChainSource;
 use ldk_node::Builder;
 use std::collections::HashMap;
 
@@ -43,11 +44,13 @@ fn channel_full_cycle_with_vss_store() {
 		.unwrap();
 	node_b.start().unwrap();
 
+	let chain_source = TestChainSource::Esplora(&electrsd);
+
 	common::do_channel_full_cycle(
 		node_a,
 		node_b,
 		&bitcoind.client,
-		&electrsd.client,
+		&chain_source,
 		false,
 		true,
 		false,

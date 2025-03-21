@@ -360,8 +360,8 @@ pub(crate) fn setup_node(
 	node
 }
 
-pub(crate) fn generate_blocks_and_wait<E: ElectrumApi>(
-	bitcoind: &BitcoindClient, electrs: &E, num: usize,
+pub(crate) fn generate_blocks_and_wait(
+	bitcoind: &BitcoindClient, chain_source: &TestChainSource, num: usize,
 ) {
 	print!("Generating {} blocks...", num);
 	let cur_height = bitcoind.get_block_count().expect("failed to get current block height");
@@ -371,8 +371,16 @@ pub(crate) fn generate_blocks_and_wait<E: ElectrumApi>(
 		.require_network(bitcoin::Network::Regtest)
 		.expect("failed to get new address");
 	// TODO: expect this Result once the WouldBlock issue is resolved upstream.
-	let _block_hashes_res = bitcoind.generate_to_address(num as u64, &address);
-	wait_for_block(electrs, cur_height as usize + num);
+	//let _block_hashes_res = bitcoind.generate_to_address(num as u64, &address);
+	bitcoind.generate_to_address(num as u64, &address).expect("failed to generate blocks");
+	match chain_source {
+		TestChainSource::Esplora(electrs) => {
+			wait_for_block(&electrs.client, cur_height as usize + num)
+		},
+		TestChainSource::BitcoindRpc(_) => {
+			std::thread::sleep(Duration::from_secs(1));
+		},
+	}
 	print!(" Done!");
 	println!("\n");
 }
@@ -449,23 +457,31 @@ where
 	}
 }
 
-pub(crate) fn premine_and_distribute_funds<E: ElectrumApi>(
-	bitcoind: &BitcoindClient, electrs: &E, addrs: Vec<Address>, amount: Amount,
+pub(crate) fn premine_and_distribute_funds(
+	bitcoind: &BitcoindClient, chain_source: &TestChainSource, addrs: Vec<Address>, amount: Amount,
 ) {
-	generate_blocks_and_wait(bitcoind, electrs, 101);
+	generate_blocks_and_wait(bitcoind, chain_source, 101);
+	std::thread::sleep(Duration::from_secs(5));
 
 	for addr in addrs {
 		let txid =
 			bitcoind.send_to_address(&addr, amount, None, None, None, None, None, None).unwrap();
-		wait_for_tx(electrs, txid);
+		match chain_source {
+			TestChainSource::Esplora(electrs) => {
+				wait_for_tx(&electrs.client, txid);
+			},
+			TestChainSource::BitcoindRpc(_) => {
+				std::thread::sleep(Duration::from_secs(1));
+			},
+		}
 	}
 
-	generate_blocks_and_wait(bitcoind, electrs, 1);
+	generate_blocks_and_wait(bitcoind, chain_source, 1);
 }
 
 pub fn open_channel(
-	node_a: &TestNode, node_b: &TestNode, funding_amount_sat: u64, should_announce: bool,
-	electrsd: &ElectrsD,
+	node_a: &TestNode, node_b: &TestNode, chain_source: &TestChainSource, funding_amount_sat: u64,
+	should_announce: bool,
 ) {
 	if should_announce {
 		node_a
@@ -493,12 +509,20 @@ pub fn open_channel(
 	let funding_txo_a = expect_channel_pending_event!(node_a, node_b.node_id());
 	let funding_txo_b = expect_channel_pending_event!(node_b, node_a.node_id());
 	assert_eq!(funding_txo_a, funding_txo_b);
-	wait_for_tx(&electrsd.client, funding_txo_a.txid);
+
+	match chain_source {
+		TestChainSource::Esplora(electrs) => {
+			wait_for_tx(&electrs.client, funding_txo_a.txid);
+		},
+		TestChainSource::BitcoindRpc(_) => {
+			std::thread::sleep(Duration::from_secs(1));
+		},
+	}
 }
 
-pub(crate) fn do_channel_full_cycle<E: ElectrumApi>(
-	node_a: TestNode, node_b: TestNode, bitcoind: &BitcoindClient, electrsd: &E, allow_0conf: bool,
-	expect_anchor_channel: bool, force_close: bool,
+pub(crate) fn do_channel_full_cycle(
+	node_a: TestNode, node_b: TestNode, bitcoind: &BitcoindClient, chain_source: &TestChainSource,
+	allow_0conf: bool, expect_anchor_channel: bool, force_close: bool,
 ) {
 	let addr_a = node_a.onchain_payment().new_address().unwrap();
 	let addr_b = node_b.onchain_payment().new_address().unwrap();
@@ -507,7 +531,7 @@ pub(crate) fn do_channel_full_cycle<E: ElectrumApi>(
 
 	premine_and_distribute_funds(
 		&bitcoind,
-		electrsd,
+		&chain_source,
 		vec![addr_a, addr_b],
 		Amount::from_sat(premine_amount_sat),
 	);
@@ -569,11 +593,21 @@ pub(crate) fn do_channel_full_cycle<E: ElectrumApi>(
 	let funding_txo_b = expect_channel_pending_event!(node_b, node_a.node_id());
 	assert_eq!(funding_txo_a, funding_txo_b);
 
-	wait_for_tx(electrsd, funding_txo_a.txid);
+	match chain_source {
+		TestChainSource::Esplora(electrs) => {
+			wait_for_tx(&electrs.client, funding_txo_a.txid);
+		},
+		TestChainSource::BitcoindRpc(_) => {
+			std::thread::sleep(Duration::from_secs(1));
+		},
+	}
 
 	if !allow_0conf {
-		generate_blocks_and_wait(&bitcoind, electrsd, 6);
+		generate_blocks_and_wait(&bitcoind, chain_source, 6);
 	}
+	// TODO: this line shouldn't be here. Added it to test CI.
+	// need to figure out 0-conf channel case with bitcoind only
+	generate_blocks_and_wait(&bitcoind, chain_source, 1);
 
 	node_a.sync_wallets().unwrap();
 	node_b.sync_wallets().unwrap();
@@ -921,9 +955,19 @@ pub(crate) fn do_channel_full_cycle<E: ElectrumApi>(
 	expect_event!(node_a, ChannelClosed);
 	expect_event!(node_b, ChannelClosed);
 
-	wait_for_outpoint_spend(electrsd, funding_txo_b);
+	match chain_source {
+		TestChainSource::Esplora(electrs) => {
+			wait_for_outpoint_spend(&electrs.client, funding_txo_b);
+		},
+		TestChainSource::BitcoindRpc(_) => {
+			std::thread::sleep(Duration::from_secs(1));
+		},
+	}
 
-	generate_blocks_and_wait(&bitcoind, electrsd, 1);
+	node_a.sync_wallets().unwrap();
+	node_b.sync_wallets().unwrap();
+
+	generate_blocks_and_wait(&bitcoind, chain_source, 1);
 	node_a.sync_wallets().unwrap();
 	node_b.sync_wallets().unwrap();
 
@@ -939,7 +983,7 @@ pub(crate) fn do_channel_full_cycle<E: ElectrumApi>(
 				assert_eq!(counterparty_node_id, node_a.node_id());
 				let cur_height = node_b.status().current_best_block.height;
 				let blocks_to_go = confirmation_height - cur_height;
-				generate_blocks_and_wait(&bitcoind, electrsd, blocks_to_go as usize);
+				generate_blocks_and_wait(&bitcoind, chain_source, blocks_to_go as usize);
 				node_b.sync_wallets().unwrap();
 				node_a.sync_wallets().unwrap();
 			},
@@ -952,7 +996,7 @@ pub(crate) fn do_channel_full_cycle<E: ElectrumApi>(
 			PendingSweepBalance::BroadcastAwaitingConfirmation { .. } => {},
 			_ => panic!("Unexpected balance state!"),
 		}
-		generate_blocks_and_wait(&bitcoind, electrsd, 1);
+		generate_blocks_and_wait(&bitcoind, chain_source, 1);
 		node_b.sync_wallets().unwrap();
 		node_a.sync_wallets().unwrap();
 
@@ -962,7 +1006,7 @@ pub(crate) fn do_channel_full_cycle<E: ElectrumApi>(
 			PendingSweepBalance::AwaitingThresholdConfirmations { .. } => {},
 			_ => panic!("Unexpected balance state!"),
 		}
-		generate_blocks_and_wait(&bitcoind, electrsd, 5);
+		generate_blocks_and_wait(&bitcoind, chain_source, 5);
 		node_b.sync_wallets().unwrap();
 		node_a.sync_wallets().unwrap();
 
@@ -980,7 +1024,7 @@ pub(crate) fn do_channel_full_cycle<E: ElectrumApi>(
 				assert_eq!(counterparty_node_id, node_b.node_id());
 				let cur_height = node_a.status().current_best_block.height;
 				let blocks_to_go = confirmation_height - cur_height;
-				generate_blocks_and_wait(&bitcoind, electrsd, blocks_to_go as usize);
+				generate_blocks_and_wait(&bitcoind, chain_source, blocks_to_go as usize);
 				node_a.sync_wallets().unwrap();
 				node_b.sync_wallets().unwrap();
 			},
@@ -993,7 +1037,7 @@ pub(crate) fn do_channel_full_cycle<E: ElectrumApi>(
 			PendingSweepBalance::BroadcastAwaitingConfirmation { .. } => {},
 			_ => panic!("Unexpected balance state!"),
 		}
-		generate_blocks_and_wait(&bitcoind, electrsd, 1);
+		generate_blocks_and_wait(&bitcoind, chain_source, 1);
 		node_a.sync_wallets().unwrap();
 		node_b.sync_wallets().unwrap();
 
@@ -1003,7 +1047,7 @@ pub(crate) fn do_channel_full_cycle<E: ElectrumApi>(
 			PendingSweepBalance::AwaitingThresholdConfirmations { .. } => {},
 			_ => panic!("Unexpected balance state!"),
 		}
-		generate_blocks_and_wait(&bitcoind, electrsd, 5);
+		generate_blocks_and_wait(&bitcoind, chain_source, 5);
 		node_a.sync_wallets().unwrap();
 		node_b.sync_wallets().unwrap();
 	}

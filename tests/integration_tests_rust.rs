@@ -33,54 +33,54 @@ use bitcoin::Amount;
 use lightning_invoice::{Bolt11InvoiceDescription, Description};
 use log::LevelFilter;
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 #[test]
 fn channel_full_cycle() {
 	let (bitcoind, electrsd) = setup_bitcoind_and_electrsd();
 	let chain_source = TestChainSource::Esplora(&electrsd);
 	let (node_a, node_b) = setup_two_nodes(&chain_source, false, true, false);
-	do_channel_full_cycle(node_a, node_b, &bitcoind.client, &electrsd.client, false, true, false);
+	do_channel_full_cycle(node_a, node_b, &bitcoind.client, &chain_source, false, true, false);
 }
 
 #[test]
 fn channel_full_cycle_bitcoind() {
-	let (bitcoind, electrsd) = setup_bitcoind_and_electrsd();
+	let (bitcoind, _electrsd) = setup_bitcoind_and_electrsd();
 	let chain_source = TestChainSource::BitcoindRpc(&bitcoind);
 	let (node_a, node_b) = setup_two_nodes(&chain_source, false, true, false);
-	do_channel_full_cycle(node_a, node_b, &bitcoind.client, &electrsd.client, false, true, false);
+	do_channel_full_cycle(node_a, node_b, &bitcoind.client, &chain_source, false, true, false);
 }
 
 #[test]
 fn channel_full_cycle_force_close() {
-	let (bitcoind, electrsd) = setup_bitcoind_and_electrsd();
-	let chain_source = TestChainSource::Esplora(&electrsd);
+	let (bitcoind, _electrsd) = setup_bitcoind_and_electrsd();
+	let chain_source = TestChainSource::BitcoindRpc(&bitcoind);
 	let (node_a, node_b) = setup_two_nodes(&chain_source, false, true, false);
-	do_channel_full_cycle(node_a, node_b, &bitcoind.client, &electrsd.client, false, true, true);
+	do_channel_full_cycle(node_a, node_b, &bitcoind.client, &chain_source, false, true, true);
 }
 
 #[test]
 fn channel_full_cycle_force_close_trusted_no_reserve() {
-	let (bitcoind, electrsd) = setup_bitcoind_and_electrsd();
-	let chain_source = TestChainSource::Esplora(&electrsd);
+	let (bitcoind, _electrsd) = setup_bitcoind_and_electrsd();
+	let chain_source = TestChainSource::BitcoindRpc(&bitcoind);
 	let (node_a, node_b) = setup_two_nodes(&chain_source, false, true, true);
-	do_channel_full_cycle(node_a, node_b, &bitcoind.client, &electrsd.client, false, true, true);
+	do_channel_full_cycle(node_a, node_b, &bitcoind.client, &chain_source, false, true, true);
 }
 
 #[test]
 fn channel_full_cycle_0conf() {
-	let (bitcoind, electrsd) = setup_bitcoind_and_electrsd();
-	let chain_source = TestChainSource::Esplora(&electrsd);
+	let (bitcoind, _electrsd) = setup_bitcoind_and_electrsd();
+	let chain_source = TestChainSource::BitcoindRpc(&bitcoind);
 	let (node_a, node_b) = setup_two_nodes(&chain_source, true, true, false);
-	do_channel_full_cycle(node_a, node_b, &bitcoind.client, &electrsd.client, true, true, false)
+	do_channel_full_cycle(node_a, node_b, &bitcoind.client, &chain_source, true, true, false)
 }
 
 #[test]
 fn channel_full_cycle_legacy_staticremotekey() {
-	let (bitcoind, electrsd) = setup_bitcoind_and_electrsd();
-	let chain_source = TestChainSource::Esplora(&electrsd);
+	let (bitcoind, _electrsd) = setup_bitcoind_and_electrsd();
+	let chain_source = TestChainSource::BitcoindRpc(&bitcoind);
 	let (node_a, node_b) = setup_two_nodes(&chain_source, false, false, false);
-	do_channel_full_cycle(node_a, node_b, &bitcoind.client, &electrsd.client, false, false, false);
+	do_channel_full_cycle(node_a, node_b, &bitcoind.client, &chain_source, false, false, false);
 }
 
 #[test]
@@ -96,7 +96,7 @@ fn channel_open_fails_when_funds_insufficient() {
 
 	premine_and_distribute_funds(
 		&bitcoind.client,
-		&electrsd.client,
+		&chain_source,
 		vec![addr_a, addr_b],
 		Amount::from_sat(premine_amount_sat),
 	);
@@ -120,18 +120,21 @@ fn channel_open_fails_when_funds_insufficient() {
 
 #[test]
 fn multi_hop_sending() {
-	let (bitcoind, electrsd) = setup_bitcoind_and_electrsd();
-	let esplora_url = format!("http://{}", electrsd.esplora_url.as_ref().unwrap());
+	let (bitcoind, _electrsd) = setup_bitcoind_and_electrsd();
+	let chain_source = TestChainSource::BitcoindRpc(&bitcoind);
 
 	// Setup and fund 5 nodes
 	let mut nodes = Vec::new();
 	for _ in 0..5 {
 		let config = random_config(true);
-		let mut sync_config = EsploraSyncConfig::default();
-		sync_config.onchain_wallet_sync_interval_secs = 100000;
-		sync_config.lightning_wallet_sync_interval_secs = 100000;
+		let rpc_host = bitcoind.params.rpc_socket.ip().to_string();
+		let rpc_port = bitcoind.params.rpc_socket.port();
+		let values = bitcoind.params.get_cookie_values().unwrap().unwrap();
+		let rpc_user = values.user;
+		let rpc_password = values.password;
 		setup_builder!(builder, config.node_config);
-		builder.set_chain_source_esplora(esplora_url.clone(), Some(sync_config));
+		builder.set_chain_source_bitcoind_rpc(rpc_host, rpc_port, rpc_user, rpc_password);
+
 		let node = builder.build().unwrap();
 		node.start().unwrap();
 		nodes.push(node);
@@ -141,7 +144,7 @@ fn multi_hop_sending() {
 	let premine_amount_sat = 5_000_000;
 	premine_and_distribute_funds(
 		&bitcoind.client,
-		&electrsd.client,
+		&chain_source,
 		addresses,
 		Amount::from_sat(premine_amount_sat),
 	);
@@ -159,18 +162,18 @@ fn multi_hop_sending() {
 	//                   \                  /
 	//                    (1M:0)- N3 -(1M:0)
 
-	open_channel(&nodes[0], &nodes[1], 100_000, true, &electrsd);
-	open_channel(&nodes[1], &nodes[2], 1_000_000, true, &electrsd);
+	open_channel(&nodes[0], &nodes[1], &chain_source, 100_000, true);
+	open_channel(&nodes[1], &nodes[2], &chain_source, 1_000_000, true);
 	// We need to sync wallets in-between back-to-back channel opens from the same node so BDK
 	// wallet picks up on the broadcast funding tx and doesn't double-spend itself.
 	//
 	// TODO: Remove once fixed in BDK.
 	nodes[1].sync_wallets().unwrap();
-	open_channel(&nodes[1], &nodes[3], 1_000_000, true, &electrsd);
-	open_channel(&nodes[2], &nodes[4], 1_000_000, true, &electrsd);
-	open_channel(&nodes[3], &nodes[4], 1_000_000, true, &electrsd);
+	open_channel(&nodes[1], &nodes[3], &chain_source, 1_000_000, true);
+	open_channel(&nodes[2], &nodes[4], &chain_source, 1_000_000, true);
+	open_channel(&nodes[3], &nodes[4], &chain_source, 1_000_000, true);
 
-	generate_blocks_and_wait(&bitcoind.client, &electrsd.client, 6);
+	generate_blocks_and_wait(&bitcoind.client, &chain_source, 6);
 
 	for n in &nodes {
 		n.sync_wallets().unwrap();
@@ -221,6 +224,7 @@ fn multi_hop_sending() {
 fn start_stop_reinit() {
 	let (bitcoind, electrsd) = setup_bitcoind_and_electrsd();
 	let config = random_config(true);
+	let chain_source = TestChainSource::Esplora(&electrsd);
 
 	let esplora_url = format!("http://{}", electrsd.esplora_url.as_ref().unwrap());
 
@@ -246,7 +250,7 @@ fn start_stop_reinit() {
 	let expected_amount = Amount::from_sat(100000);
 	premine_and_distribute_funds(
 		&bitcoind.client,
-		&electrsd.client,
+		&chain_source,
 		vec![funding_address],
 		expected_amount,
 	);
@@ -300,7 +304,7 @@ fn onchain_send_receive() {
 	let premine_amount_sat = 1_100_000;
 	premine_and_distribute_funds(
 		&bitcoind.client,
-		&electrsd.client,
+		&chain_source,
 		vec![addr_a.clone(), addr_b.clone()],
 		Amount::from_sat(premine_amount_sat),
 	);
@@ -330,8 +334,8 @@ fn onchain_send_receive() {
 
 	let channel_amount_sat = 1_000_000;
 	let reserve_amount_sat = 25_000;
-	open_channel(&node_b, &node_a, channel_amount_sat, true, &electrsd);
-	generate_blocks_and_wait(&bitcoind.client, &electrsd.client, 6);
+	open_channel(&node_b, &node_a, &chain_source, channel_amount_sat, true);
+	generate_blocks_and_wait(&bitcoind.client, &chain_source, 6);
 
 	node_a.sync_wallets().unwrap();
 	node_b.sync_wallets().unwrap();
@@ -363,7 +367,16 @@ fn onchain_send_receive() {
 	let amount_to_send_sats = 54321;
 	let txid =
 		node_b.onchain_payment().send_to_address(&addr_a, amount_to_send_sats, None).unwrap();
-	wait_for_tx(&electrsd.client, txid);
+
+	match chain_source {
+		TestChainSource::Esplora(electrs) => {
+			wait_for_tx(&electrs.client, txid);
+		},
+		TestChainSource::BitcoindRpc(_) => {
+			std::thread::sleep(Duration::from_secs(1));
+		},
+	}
+
 	node_a.sync_wallets().unwrap();
 	node_b.sync_wallets().unwrap();
 
@@ -390,7 +403,7 @@ fn onchain_send_receive() {
 	assert_eq!(payment_a.amount_msat, payment_b.amount_msat);
 	assert_eq!(payment_a.fee_paid_msat, payment_b.fee_paid_msat);
 
-	generate_blocks_and_wait(&bitcoind.client, &electrsd.client, 6);
+	generate_blocks_and_wait(&bitcoind.client, &chain_source, 6);
 	node_a.sync_wallets().unwrap();
 	node_b.sync_wallets().unwrap();
 
@@ -428,8 +441,17 @@ fn onchain_send_receive() {
 
 	let addr_b = node_b.onchain_payment().new_address().unwrap();
 	let txid = node_a.onchain_payment().send_all_to_address(&addr_b, true, None).unwrap();
-	generate_blocks_and_wait(&bitcoind.client, &electrsd.client, 6);
-	wait_for_tx(&electrsd.client, txid);
+	generate_blocks_and_wait(&bitcoind.client, &chain_source, 6);
+
+	match chain_source {
+		TestChainSource::Esplora(electrs) => {
+			wait_for_tx(&electrs.client, txid);
+			//wait_for_tx(&chain_source, txid);
+		},
+		TestChainSource::BitcoindRpc(_) => {
+			std::thread::sleep(Duration::from_secs(1));
+		},
+	}
 
 	node_a.sync_wallets().unwrap();
 	node_b.sync_wallets().unwrap();
@@ -451,8 +473,17 @@ fn onchain_send_receive() {
 
 	let addr_b = node_b.onchain_payment().new_address().unwrap();
 	let txid = node_a.onchain_payment().send_all_to_address(&addr_b, false, None).unwrap();
-	generate_blocks_and_wait(&bitcoind.client, &electrsd.client, 6);
-	wait_for_tx(&electrsd.client, txid);
+	generate_blocks_and_wait(&bitcoind.client, &chain_source, 6);
+
+	match chain_source {
+		TestChainSource::Esplora(electrs) => {
+			wait_for_tx(&electrs.client, txid);
+			//wait_for_tx(&chain_source, txid);
+		},
+		TestChainSource::BitcoindRpc(_) => {
+			std::thread::sleep(Duration::from_secs(1));
+		},
+	}
 
 	node_a.sync_wallets().unwrap();
 	node_b.sync_wallets().unwrap();
@@ -491,7 +522,7 @@ fn onchain_wallet_recovery() {
 
 	premine_and_distribute_funds(
 		&bitcoind.client,
-		&electrsd.client,
+		&chain_source,
 		vec![addr_1],
 		Amount::from_sat(premine_amount_sat),
 	);
@@ -513,9 +544,19 @@ fn onchain_wallet_recovery() {
 			None,
 		)
 		.unwrap();
-	wait_for_tx(&electrsd.client, txid);
 
-	generate_blocks_and_wait(&bitcoind.client, &electrsd.client, 1);
+	match chain_source {
+		TestChainSource::Esplora(electrs) => {
+			wait_for_tx(&electrs.client, txid);
+			//wait_for_tx(&chain_source, txid);
+		},
+		TestChainSource::BitcoindRpc(_) => {
+			std::thread::sleep(Duration::from_secs(1));
+		},
+	}
+	//wait_for_tx(&chain_source, txid);
+
+	generate_blocks_and_wait(&bitcoind.client, &chain_source, 1);
 
 	original_node.sync_wallets().unwrap();
 	assert_eq!(
@@ -555,9 +596,18 @@ fn onchain_wallet_recovery() {
 			None,
 		)
 		.unwrap();
-	wait_for_tx(&electrsd.client, txid);
 
-	generate_blocks_and_wait(&bitcoind.client, &electrsd.client, 1);
+	match chain_source {
+		TestChainSource::Esplora(electrs) => {
+			wait_for_tx(&electrs.client, txid);
+			//wait_for_tx(&chain_source, txid);
+		},
+		TestChainSource::BitcoindRpc(_) => {
+			std::thread::sleep(Duration::from_secs(1));
+		},
+	}
+
+	generate_blocks_and_wait(&bitcoind.client, &chain_source, 1);
 
 	recovered_node.sync_wallets().unwrap();
 	assert_eq!(
@@ -678,15 +728,15 @@ fn simple_bolt12_send_receive() {
 	let premine_amount_sat = 5_000_000;
 	premine_and_distribute_funds(
 		&bitcoind.client,
-		&electrsd.client,
+		&chain_source,
 		vec![address_a],
 		Amount::from_sat(premine_amount_sat),
 	);
 
 	node_a.sync_wallets().unwrap();
-	open_channel(&node_a, &node_b, 4_000_000, true, &electrsd);
+	open_channel(&node_a, &node_b, &chain_source, 4_000_000, true);
 
-	generate_blocks_and_wait(&bitcoind.client, &electrsd.client, 6);
+	generate_blocks_and_wait(&bitcoind.client, &chain_source, 6);
 
 	node_a.sync_wallets().unwrap();
 	node_b.sync_wallets().unwrap();
@@ -901,14 +951,14 @@ fn generate_bip21_uri() {
 
 	premine_and_distribute_funds(
 		&bitcoind.client,
-		&electrsd.client,
+		&chain_source,
 		vec![address_a],
 		Amount::from_sat(premined_sats),
 	);
 
 	node_a.sync_wallets().unwrap();
-	open_channel(&node_a, &node_b, 4_000_000, true, &electrsd);
-	generate_blocks_and_wait(&bitcoind.client, &electrsd.client, 6);
+	open_channel(&node_a, &node_b, &chain_source, 4_000_000, true);
+	generate_blocks_and_wait(&bitcoind.client, &chain_source, 6);
 
 	node_a.sync_wallets().unwrap();
 	node_b.sync_wallets().unwrap();
@@ -944,14 +994,14 @@ fn unified_qr_send_receive() {
 
 	premine_and_distribute_funds(
 		&bitcoind.client,
-		&electrsd.client,
+		&chain_source,
 		vec![address_a],
 		Amount::from_sat(premined_sats),
 	);
 
 	node_a.sync_wallets().unwrap();
-	open_channel(&node_a, &node_b, 4_000_000, true, &electrsd);
-	generate_blocks_and_wait(&bitcoind.client, &electrsd.client, 6);
+	open_channel(&node_a, &node_b, &chain_source, 4_000_000, true);
+	generate_blocks_and_wait(&bitcoind.client, &chain_source, 6);
 
 	node_a.sync_wallets().unwrap();
 	node_b.sync_wallets().unwrap();
@@ -1032,8 +1082,17 @@ fn unified_qr_send_receive() {
 		},
 	};
 
-	generate_blocks_and_wait(&bitcoind.client, &electrsd.client, 6);
-	wait_for_tx(&electrsd.client, txid);
+	generate_blocks_and_wait(&bitcoind.client, &chain_source, 6);
+
+	match chain_source {
+		TestChainSource::Esplora(electrs) => {
+			wait_for_tx(&electrs.client, txid);
+		},
+		TestChainSource::BitcoindRpc(_) => {
+			std::thread::sleep(Duration::from_secs(1));
+		},
+	}
+	//wait_for_tx(&chain_source, txid);
 
 	node_a.sync_wallets().unwrap();
 	node_b.sync_wallets().unwrap();
@@ -1045,6 +1104,7 @@ fn unified_qr_send_receive() {
 #[test]
 fn lsps2_client_service_integration() {
 	let (bitcoind, electrsd) = setup_bitcoind_and_electrsd();
+	let chain_source = TestChainSource::Esplora(&electrsd);
 
 	let esplora_url = format!("http://{}", electrsd.esplora_url.as_ref().unwrap());
 
@@ -1098,7 +1158,7 @@ fn lsps2_client_service_integration() {
 
 	premine_and_distribute_funds(
 		&bitcoind.client,
-		&electrsd.client,
+		&chain_source,
 		vec![service_addr, client_addr, payer_addr],
 		Amount::from_sat(premine_amount_sat),
 	);
@@ -1108,9 +1168,9 @@ fn lsps2_client_service_integration() {
 
 	// Open a channel payer -> service that will allow paying the JIT invoice
 	println!("Opening channel payer_node -> service_node!");
-	open_channel(&payer_node, &service_node, 5_000_000, false, &electrsd);
+	open_channel(&payer_node, &service_node, &chain_source, 5_000_000, false);
 
-	generate_blocks_and_wait(&bitcoind.client, &electrsd.client, 6);
+	generate_blocks_and_wait(&bitcoind.client, &chain_source, 6);
 	service_node.sync_wallets().unwrap();
 	payer_node.sync_wallets().unwrap();
 	expect_channel_ready_event!(payer_node, service_node.node_id());

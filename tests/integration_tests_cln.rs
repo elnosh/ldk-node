@@ -9,6 +9,7 @@
 
 mod common;
 
+use common::TestChainSource;
 use ldk_node::bitcoin::secp256k1::PublicKey;
 use ldk_node::bitcoin::Amount;
 use ldk_node::lightning::ln::msgs::SocketAddress;
@@ -33,23 +34,34 @@ use std::str::FromStr;
 #[test]
 fn test_cln() {
 	// Setup bitcoind / electrs clients
-	let bitcoind_client = BitcoindClient::new(
-		"127.0.0.1:18443",
-		Auth::UserPass("user".to_string(), "pass".to_string()),
-	)
-	.unwrap();
-	let electrs_client = ElectrumClient::new("tcp://127.0.0.1:50001").unwrap();
+	// let bitcoind_client = BitcoindClient::new(
+	// 	"127.0.0.1:18443",
+	// 	Auth::UserPass("user".to_string(), "pass".to_string()),
+	// )
+	// .unwrap();
+	// let electrs_client = ElectrumClient::new("tcp://127.0.0.1:50001").unwrap();
 
-	let _ = bitcoind_client.create_wallet("cln_integration_test", None, None, None, None);
-	let _ = bitcoind_client.load_wallet("cln_integration_test");
+	let (bitcoind, electrs) = common::setup_bitcoind_and_electrsd();
+
+	let _ = bitcoind.client.create_wallet("cln_integration_test", None, None, None, None);
+	let _ = bitcoind.client.load_wallet("cln_integration_test");
+
+	let chain_source = TestChainSource::BitcoindRpc(&bitcoind);
 
 	// Give electrs a kick.
-	common::generate_blocks_and_wait(&bitcoind_client, &electrs_client, 1);
+	common::generate_blocks_and_wait(&bitcoind.client, &chain_source, 1);
 
 	// Setup LDK Node
 	let config = common::random_config(true);
 	let mut builder = Builder::from_config(config.node_config);
-	builder.set_chain_source_esplora("http://127.0.0.1:3002".to_string(), None);
+
+	let rpc_host = bitcoind.params.rpc_socket.ip().to_string();
+	let rpc_port = bitcoind.params.rpc_socket.port();
+	let values = bitcoind.params.get_cookie_values().unwrap().unwrap();
+	let rpc_user = values.user;
+	let rpc_password = values.password;
+	builder.set_chain_source_bitcoind_rpc(rpc_host, rpc_port, rpc_user, rpc_password);
+	//builder.set_chain_source_esplora("http://127.0.0.1:3002".to_string(), None);
 
 	let node = builder.build().unwrap();
 	node.start().unwrap();
@@ -58,8 +70,8 @@ fn test_cln() {
 	let address = node.onchain_payment().new_address().unwrap();
 	let premine_amount = Amount::from_sat(5_000_000);
 	common::premine_and_distribute_funds(
-		&bitcoind_client,
-		&electrs_client,
+		&bitcoind.client,
+		&chain_source,
 		vec![address],
 		premine_amount,
 	);
@@ -90,8 +102,8 @@ fn test_cln() {
 		.unwrap();
 
 	let funding_txo = common::expect_channel_pending_event!(node, cln_node_id);
-	common::wait_for_tx(&electrs_client, funding_txo.txid);
-	common::generate_blocks_and_wait(&bitcoind_client, &electrs_client, 6);
+	//common::wait_for_tx(&electrs_client, funding_txo.txid);
+	common::generate_blocks_and_wait(&bitcoind.client, &chain_source, 6);
 	node.sync_wallets().unwrap();
 	let user_channel_id = common::expect_channel_ready_event!(node, cln_node_id);
 
