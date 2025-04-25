@@ -78,6 +78,8 @@ fn test_cln() {
 		},
 	};
 
+	node.connect(cln_node_id, cln_address.clone(), false).unwrap();
+
 	node.sync_wallets().unwrap();
 
 	// Open the channel
