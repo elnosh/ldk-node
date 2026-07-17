@@ -118,6 +118,11 @@ impl Runtime {
 			);
 			return;
 		}
+		while let Some(res) = cancellable_background_tasks.tasks.try_join_next() {
+			if let Err(e) = res {
+				log_error!(self.logger, "Cancellable background task failed: {}", e);
+			}
+		}
 		let runtime_handle = self.handle();
 		// Since it seems to make a difference to `tokio` (see
 		// https://docs.rs/tokio/latest/tokio/time/fn.timeout.html#panics) we make sure the futures
